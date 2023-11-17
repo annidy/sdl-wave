@@ -1,0 +1,13 @@
+cmake_minimum_required(VERSION 3.10)
+
+project(sdl-wave)
+
+find_package(SDL2 REQUIRED)
+
+add_executable(sdl-wave main.cpp)
+
+# 包含SDL2头文件目录
+target_include_directories(sdl-wave PRIVATE ${SDL2_INCLUDE_DIRS})
+
+# 链接SDL2库
+target_link_libraries(sdl-wave PRIVATE ${SDL2_LIBRARIES})
