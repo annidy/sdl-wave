@@ -2,20 +2,37 @@
 #include <SDL2/SDL_audio.h>
 #include <iostream>
 #include <vector>
+#include <cmath>
+#include <mutex>
 
 const int WINDOW_WIDTH = 800;
 const int WINDOW_HEIGHT = 600;
-const int AUDIO_BUFFER_SIZE = 1024;
+const int AUDIO_BUFFER_SIZE = 640;
 
 SDL_Renderer* renderer = nullptr;
 SDL_Window* window = nullptr;
 
-std::vector<Sint16> audioBuffer(AUDIO_BUFFER_SIZE, 0);
-Uint32 audioBufferPosition = 0;
+std::vector<double> dbBuffer(WINDOW_WIDTH, 0);
+Uint32 dbBufferPos = 0;
+std::mutex dbBufferMutex;
 
 void audioCallback(void *userdata, Uint8 *stream, int len)
 {
-    memcpy(&audioBuffer[0], stream, len);
+    Sint16 *stream16 = (Sint16 *)stream;
+    // https://stackoverflow.com/questions/535246/sound-pressure-display-for-wave-pcm-data
+    double sum = 0;
+    for (int i = 0; i < len/2; ++i) {
+        sum += stream16[i] * stream16[i];
+    }
+    double average = sum / len / 2;
+    std::lock_guard<std::mutex> lock(dbBufferMutex);
+    auto db = 10 * std::log10(average);
+    if (db < 0.0) {
+        db = 0;
+    }
+    dbBuffer[dbBufferPos] = db;
+    dbBufferPos = (dbBufferPos + 1) % WINDOW_WIDTH;
+    SDL_Log("average = %f, db = %f, len = %d", average, db, len);
 }
 
 int main(int argc, char* argv[]) {
@@ -71,10 +88,11 @@ int main(int argc, char* argv[]) {
     // 主循环
     bool quit = false;
     SDL_Event e;
-    while (!quit) {
+        while (!quit) {
         while (SDL_PollEvent(&e) != 0) {
             if (e.type == SDL_QUIT) {
                 quit = true;
+                break;
             }
         }
 
@@ -83,19 +101,18 @@ int main(int argc, char* argv[]) {
         SDL_RenderClear(renderer);
 
         SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+        uint64_t now = SDL_GetPerformanceCounter();
+        std::lock_guard<std::mutex> lock(dbBufferMutex);
         int x0 = 0, y0 = 0;
         for (int i = 0; i < WINDOW_WIDTH; ++i) {
-            int ai = AUDIO_BUFFER_SIZE / WINDOW_WIDTH * i;
-            int y = WINDOW_HEIGHT / 2 + audioBuffer[ai] / double(SDL_MAX_SINT16) * WINDOW_HEIGHT / 2;
+            int bi = (dbBufferPos + i + 1) % WINDOW_WIDTH;
+            int y = WINDOW_HEIGHT / 2 - dbBuffer[bi];
             SDL_RenderDrawLine(renderer, x0, y0, i, y);
             x0 = i;
             y0 = y;
         }
 
         SDL_RenderPresent(renderer);
-
-        // 重置音频缓冲区位置
-        audioBufferPosition = 0;
     }
 
     // 关闭SDL
