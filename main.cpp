@@ -4,6 +4,8 @@
 #include <vector>
 #include <cmath>
 #include <mutex>
+#include <unistd.h>
+#include <thread>
 
 const int WINDOW_WIDTH = 800;
 const int WINDOW_HEIGHT = 600;
@@ -35,9 +37,29 @@ void audioCallback(void *userdata, Uint8 *stream, int len)
     SDL_Log("average = %f, db = %f, len = %d", average, db, len);
 }
 
+void open_mic();
+void open_file(char *pcm_file);
+
 int main(int argc, char* argv[]) {
+
+    char *pcm_file = nullptr;
+    int c;
+    while ((c = getopt(argc, argv, "i:")) != -1) {
+        switch (c)
+        {
+        case 'i':
+            pcm_file = optarg;
+            break;
+        case '?':
+            abort();
+        default:
+            break;
+        }
+    }
+
     // 初始化SDL
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0) {
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0)
+    {
         std::cerr << "SDL初始化失败: " << SDL_GetError() << std::endl;
         return 1;
     }
@@ -58,32 +80,11 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-
-    const char *deviceName = SDL_GetAudioDeviceName(0, SDL_TRUE);
-    printf("%d - %s\n", 0, deviceName);
-
-    // 配置音频规格
-    SDL_AudioSpec desiredSpec, obtainedSpec;
-    desiredSpec.freq = 16000;
-    desiredSpec.format = AUDIO_S16SYS;
-    desiredSpec.channels = 1;
-    desiredSpec.samples = AUDIO_BUFFER_SIZE;
-    desiredSpec.callback = audioCallback;
-
-    // Open recording device
-    int recordingDeviceId = SDL_OpenAudioDevice(SDL_GetAudioDeviceName(0, SDL_TRUE), SDL_TRUE, &desiredSpec, &obtainedSpec, SDL_AUDIO_ALLOW_FORMAT_CHANGE);
-
-    // 打开音频设备
-    if (recordingDeviceId < 0) {
-            std::cerr << "无法打开音频设备: " << SDL_GetError() << std::endl;
-            SDL_DestroyRenderer(renderer);
-            SDL_DestroyWindow(window);
-            SDL_Quit();
-            return 1;
-        }
-
-    // 启动音频回调
-    SDL_PauseAudioDevice(recordingDeviceId, SDL_FALSE);
+    if (pcm_file) {
+        open_file(pcm_file);
+    } else {
+        open_mic();
+    }
 
     // 主循环
     bool quit = false;
@@ -122,4 +123,57 @@ int main(int argc, char* argv[]) {
     SDL_Quit();
 
     return 0;
+}
+void open_mic()
+{
+    const char *deviceName = SDL_GetAudioDeviceName(0, SDL_TRUE);
+    printf("%d - %s\n", 0, deviceName);
+
+    // 配置音频规格
+    SDL_AudioSpec desiredSpec, obtainedSpec;
+    desiredSpec.freq = 16000;
+    desiredSpec.format = AUDIO_S16SYS;
+    desiredSpec.channels = 1;
+    desiredSpec.samples = AUDIO_BUFFER_SIZE;
+    desiredSpec.callback = audioCallback;
+
+    // Open recording device
+    int recordingDeviceId = SDL_OpenAudioDevice(SDL_GetAudioDeviceName(0, SDL_TRUE), SDL_TRUE, &desiredSpec, &obtainedSpec, SDL_AUDIO_ALLOW_FORMAT_CHANGE);
+
+    // 打开音频设备
+    if (recordingDeviceId < 0)
+    {
+        std::cerr << "无法打开音频设备: " << SDL_GetError() << std::endl;
+        SDL_Quit();
+    }
+
+    // 启动音频回调
+    SDL_PauseAudioDevice(recordingDeviceId, SDL_FALSE);
+}
+
+void open_file(char *pcm_file)
+{
+    SDL_AudioSpec desiredSpec, obtainedSpec;
+    desiredSpec.freq = 16000;
+    desiredSpec.format = AUDIO_S16SYS;
+    desiredSpec.channels = 1;
+    desiredSpec.samples = AUDIO_BUFFER_SIZE;
+    desiredSpec.callback = audioCallback;
+
+    std::thread([=]() {
+        auto pf = fopen(pcm_file, "rb");
+        if (!pf) {
+            std::cerr << "无法打开文件: " << pcm_file << std::endl;
+            exit(1);
+        }
+        while (!feof(pf))
+        {
+            uint8_t buffer[AUDIO_BUFFER_SIZE];
+            fread(buffer, 1, AUDIO_BUFFER_SIZE, pf);
+            audioCallback(nullptr, buffer, AUDIO_BUFFER_SIZE);
+            SDL_Delay(20);
+        }
+        
+    }).detach();
+
 }
