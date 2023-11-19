@@ -43,11 +43,15 @@ void audioCallback(void *userdata, Uint8 *stream, int len)
 
 void pcmCallback(void *userdata, Uint8 *stream, int len)
 {
-    std::unique_lock<std::mutex> lock(mutex);
-    cv.wait(lock, [&]
-            { return pcmBuffer.size() >= len; });
-    memcpy(stream, pcmBuffer.data(), len);
-    pcmBuffer.erase(pcmBuffer.begin(), std::next(pcmBuffer.begin(), len));
+    FILE *pf = (FILE *)userdata;
+    if (!feof(pf)) {
+        uint8_t buffer[len];
+        fread(buffer, 1, len, pf);
+        memcpy(stream, buffer, len);
+        audioCallback(nullptr, buffer, AUDIO_BUFFER_SIZE);
+        return;
+    }
+    memset(stream, 0, len);
 }
 
 void open_mic();
@@ -118,6 +122,14 @@ int main(int argc, char *argv[])
                 quit = true;
                 break;
             }
+            if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_SPACE)
+            {
+                if (SDL_GetAudioStatus() == SDL_AUDIO_PAUSED)
+                    SDL_PauseAudio(0);
+                else
+                    SDL_PauseAudio(1);
+                break;
+            }
         }
 
         // 渲染波形图（示例：用蓝色线表示波形）
@@ -177,6 +189,12 @@ void open_mic()
 
 void open_file(char *pcm_file)
 {
+    auto pf = fopen(pcm_file, "rb");
+    if (!pf)
+    {
+        std::cerr << "无法打开文件: " << pcm_file << std::endl;
+        exit(1);
+    }
     // 配置音频规格
     SDL_AudioSpec desiredSpec, obtainedSpec;
     SDL_zero(desiredSpec);
@@ -185,6 +203,7 @@ void open_file(char *pcm_file)
     desiredSpec.channels = 1;
     desiredSpec.samples = AUDIO_BUFFER_SIZE / 2;
     desiredSpec.callback = pcmCallback;
+    desiredSpec.userdata = pf;
 
     // 打开音频流并开始播放声音
     if (SDL_OpenAudio(&desiredSpec, &obtainedSpec) < 0)
@@ -192,29 +211,5 @@ void open_file(char *pcm_file)
         std::cerr << "无法打开音频设备: " << SDL_GetError() << std::endl;
         return;
     }
-
-    std::thread([=]()
-                {
-        auto pf = fopen(pcm_file, "rb");
-        if (!pf) {
-            std::cerr << "无法打开文件: " << pcm_file << std::endl;
-            exit(1);
-        }
-        while (!feof(pf))
-        {
-            uint8_t buffer[AUDIO_BUFFER_SIZE];
-            fread(buffer, 1, AUDIO_BUFFER_SIZE, pf);
-            audioCallback(nullptr, buffer, AUDIO_BUFFER_SIZE);
-            {
-                std::unique_lock<std::mutex> lock(mutex);
-                pcmBuffer.insert(pcmBuffer.end(), buffer, buffer+AUDIO_BUFFER_SIZE);
-                cv.notify_one();
-            }
-            while (pcmBuffer.size() > AUDIO_BUFFER_SIZE) {
-                SDL_Delay(1);
-            }
-        } })
-        .detach();
-
     SDL_PauseAudio(0);
 }
